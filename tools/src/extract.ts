@@ -1278,7 +1278,7 @@ function findDiscriminant(members: Type[]): string | null {
  *  members, so the field keeps them (`string` with `values`) instead of
  *  widening to `string`. A named alias keeps its own lowering. */
 function inlineStringUnionText(type: Type): string | undefined {
-  if (type.getAliasSymbol() || !type.isUnion()) return undefined;
+  if (type.getAliasSymbol() || type.getNonNullableType().getAliasSymbol() || !type.isUnion()) return undefined;
   const members = type.getUnionTypes();
   const literals = members.filter(m => m.isStringLiteral());
   const absent = members.some(m => m.isNull() || m.isUndefined());
