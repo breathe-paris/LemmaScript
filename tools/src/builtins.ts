@@ -120,6 +120,8 @@ export const BUILTINS = {
   "string.includes": { ret: BOOL, pure: true },
   "string.startsWith": { ret: BOOL, pure: true },
   "string.endsWith": { ret: BOOL, pure: true },
+  // `s.replace(/[…]/g, "")`, lowered at extraction: the argument is [lo, hi, …].
+  "string.removeCharRanges": { ret: STRING, pure: true },
 
   // ── map ───────────────────────────────────────────────────
   "map.get": { pure: true, argIsKey: true,

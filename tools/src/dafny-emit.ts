@@ -513,6 +513,7 @@ function emitExpr(e: Expr): string {
           }
           return `(|${obj}| >= |${args[0]}| && ${obj}[|${obj}|-|${args[0]}|..] == ${args[0]})`;
         }
+        if (e.method === "removeCharRanges") { needPreamble("StringRemoveCharRanges"); return `StringRemoveCharRanges(${obj}, ${args[0]})`; }
         if (e.method === "trim")    { needPreamble("StringTrim"); return `StringTrim(${obj})`; }
         if (e.method === "trimEnd") { needPreamble("StringTrim"); return `StringTrimRight(${obj})`; }
         if (e.method === "trimStart") { needPreamble("StringTrim"); return `StringTrimLeft(${obj})`; }
@@ -1456,6 +1457,25 @@ function StringTrim(s: string): string
 // `unicode-scalar` profile verifies under: byte-identical to what was always emitted.
 const STRING_TRIM_SCALAR = STRING_TRIM.replace(/\\u([0-9A-F]{4})/g, "\\U{$1}");
 
+// `s.replace(/[…]/g, "")`: drop every character whose code lies in one of the
+// class's inclusive `[lo, hi]` bounds (flattened pairs). Characters compare by
+// code under both string profiles: the extractor admits only BMP non-surrogate
+// bounds, where a code unit and a scalar coincide.
+const STRING_REMOVE_CHAR_RANGES = `predicate InCharRanges(c: char, bounds: seq<int>)
+  decreases |bounds|
+{
+  |bounds| >= 2 && ((bounds[0] <= c as int <= bounds[1]) || InCharRanges(c, bounds[2..]))
+}
+
+function StringRemoveCharRanges(s: string, bounds: seq<int>): string
+  ensures |StringRemoveCharRanges(s, bounds)| <= |s|
+  ensures forall i :: 0 <= i < |StringRemoveCharRanges(s, bounds)| ==> !InCharRanges(StringRemoveCharRanges(s, bounds)[i], bounds)
+  decreases |s|
+{
+  if |s| == 0 then ""
+  else (if InCharRanges(s[0], bounds) then "" else [s[0]]) + StringRemoveCharRanges(s[1..], bounds)
+}`;
+
 // Case conversion. JavaScript's \`toLowerCase\`/\`toUpperCase\` follow Unicode
 // case mapping, which can change length (\`"ß".toUpperCase()\` is \`"SS"\`) and
 // maps non-ASCII letters. On an ASCII-only string it is exactly the ASCII
@@ -1659,6 +1679,7 @@ const PREAMBLE_CODE: [string, string | (() => string)][] = [
   ["SeqSort", SEQ_SORT],
   ["SeqSortBy", SEQ_SORT_BY],
   ["StringTrim", () => isUtf16() ? STRING_TRIM : STRING_TRIM_SCALAR],
+  ["StringRemoveCharRanges", STRING_REMOVE_CHAR_RANGES],
   ["IsAsciiString", IS_ASCII_STRING],
   ["StringToLower", STRING_TO_LOWER],
   ["StringToUpper", STRING_TO_UPPER],

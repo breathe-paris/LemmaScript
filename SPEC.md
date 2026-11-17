@@ -495,6 +495,7 @@ With `local`, `SeqFilter` and `SeqAll` replace the corresponding
 | `s.split(d)` (requires `\|d\| > 0`) | — | `StringSplit(s, d)` (axiomatic preamble: `1 <= \|res\| <= \|s\| + 1`) |
 | `s.toLowerCase()` | — | `StringToLower(s)` |
 | `s.toUpperCase()` | — | `StringToUpper(s)` |
+| `s.replace(/[class]/g, "")` / `replaceAll` (plain class: chars, ranges, `\s`, `\d`, escapes; no other regex) | — | `StringRemoveCharRanges(s, [lo, hi, …])` |
 | `s.includes(sub)` | — | `StringIndexOf(s, sub) >= 0` |
 | `s.startsWith(p)` | — | `\|s\| >= \|p\| && s[..\|p\|] == p` |
 | `s.endsWith(p)` | — | `\|s\| >= \|p\| && s[\|s\|-\|p\|..] == p` |

@@ -6,7 +6,7 @@
  */
 
 import path from "path";
-import { Project, Node, FunctionDeclaration, MethodDeclaration, PropertyDeclaration, EnumDeclaration, EnumMember, InterfaceDeclaration, SourceFile, TypeAliasDeclaration, Type, TypeNode, SyntaxKind, Expression, ScriptTarget, VariableDeclaration, ts } from "ts-morph";
+import { Project, Node, CallExpression, FunctionDeclaration, MethodDeclaration, PropertyDeclaration, EnumDeclaration, EnumMember, InterfaceDeclaration, SourceFile, TypeAliasDeclaration, Type, TypeNode, SyntaxKind, Expression, ScriptTarget, VariableDeclaration, ts } from "ts-morph";
 import type { FieldInfo, TypeDeclInfo, VariantInfo } from "./types.js";
 import { initTypeParser } from "./types.js";
 import type { RawExpr, RawStmt, RawFunction, RawModule, RawClass, RawConst, RawGhostLet, RawGhostAssign } from "./rawir.js";
@@ -353,6 +353,82 @@ function _eraseGenerics(tsType: string): string {
   return tsType;
 }
 
+// ── Character-class removal: `s.replace(/[…]/g, "")` ──────────
+
+/** ECMAScript `\s`: WhiteSpace plus LineTerminator, as code-point ranges. */
+const JS_WHITESPACE_RANGES: [number, number][] = [
+  [0x09, 0x0d], [0x20, 0x20], [0xa0, 0xa0], [0x1680, 0x1680], [0x2000, 0x200a],
+  [0x2028, 0x2029], [0x202f, 0x202f], [0x205f, 0x205f], [0x3000, 0x3000], [0xfeff, 0xfeff],
+];
+const CONTROL_ESCAPES: Record<string, number> = { t: 0x09, n: 0x0a, v: 0x0b, f: 0x0c, r: 0x0d };
+
+/** The ranges a plain character class `[…]` matches, or null when it uses
+ *  anything else (negation, `\w`, `\b`, properties, …). Without the `u` and
+ *  `i` flags each member is one code unit; every admitted member lies in the
+ *  BMP outside the surrogates, so it is also one scalar. */
+function parseCharClass(body: string): [number, number][] | null {
+  if (body.startsWith("^")) return null;
+  const ranges: [number, number][] = [];
+  let i = 0;
+  // One class atom: a code, a set of ranges (`\s`, `\d`), or null if unsupported.
+  const atom = (): number | [number, number][] | null => {
+    const c = body[i++];
+    if (c !== "\\") return c === "[" || c === "]" ? null : c.codePointAt(0)!;
+    const e = body[i++];
+    if (e === undefined) return null;
+    if (e === "s") return JS_WHITESPACE_RANGES;
+    if (e === "d") return [[0x30, 0x39]];
+    if (e in CONTROL_ESCAPES) return CONTROL_ESCAPES[e];
+    if (e === "u" && /^[0-9a-fA-F]{4}$/.test(body.slice(i, i + 4))) {
+      const code = parseInt(body.slice(i, i + 4), 16);
+      i += 4;
+      return code;
+    }
+    // An escaped syntax character stands for itself.
+    return "^$\\.*+?()[]{}|/-".includes(e) ? e.codePointAt(0)! : null;
+  };
+  while (i < body.length) {
+    const lo = atom();
+    if (lo === null) return null;
+    if (typeof lo !== "number") { ranges.push(...lo); continue; }
+    if (body[i] === "-" && i + 1 < body.length) {
+      i++;
+      const hi = atom();
+      if (typeof hi !== "number" || hi < lo) return null;
+      ranges.push([lo, hi]);
+    } else {
+      ranges.push([lo, lo]);
+    }
+  }
+  const bmpScalar = ([lo, hi]: [number, number]) => hi < 0xd800 || (lo > 0xdfff && hi <= 0xffff);
+  return ranges.length > 0 && ranges.every(bmpScalar) ? ranges : null;
+}
+
+/** `s.replace(/[…]/g, "")` or `s.replaceAll(/[…]/g, "")` on a string: removes
+ *  every character of the class. Lowered to the `removeCharRanges` builtin with
+ *  the class as flat `[lo, hi, …]` bounds. Any other regex use stays outside
+ *  the fragment: the literal is then rejected as before. */
+function charClassRemoval(node: CallExpression): RawExpr | null {
+  const callee = node.getExpression();
+  if (!Node.isPropertyAccessExpression(callee) || node.hasQuestionDotToken()) return null;
+  if (callee.getName() !== "replace" && callee.getName() !== "replaceAll") return null;
+  const [pattern, replacement, ...rest] = node.getArguments();
+  if (rest.length > 0 || !pattern || !replacement || !Node.isRegularExpressionLiteral(pattern)) return null;
+  if (!(Node.isStringLiteral(replacement) || Node.isNoSubstitutionTemplateLiteral(replacement))
+    || replacement.getLiteralValue() !== "") return null;
+  const receiverType = callee.getExpression().getType();
+  if (!(receiverType.isString() || receiverType.isStringLiteral())) return null;
+  const match = /^\/\[(.*)\]\/([a-z]*)$/s.exec(pattern.getText());
+  if (!match || match[2] !== "g") return null;
+  const ranges = parseCharClass(match[1]);
+  if (!ranges) return null;
+  return {
+    kind: "call",
+    fn: { kind: "field", obj: extractExpr(callee.getExpression()), field: "removeCharRanges" },
+    args: [{ kind: "arrayLiteral", elems: ranges.flat().map(value => ({ kind: "num" as const, value })) }],
+  };
+}
+
 function extractExpr(node: Expression): RawExpr {
   // Havoc key matching: replace matching calls or new expressions with havoc expression
   if (_havocKey && (Node.isCallExpression(node) || Node.isNewExpression(node))) {
@@ -498,6 +574,8 @@ function extractExpr(node: Expression): RawExpr {
         (Node.isPropertyAccessExpression(callee) || Node.isIdentifier(callee))) {
       registerExternIfCrossFile(callee, _currentSourceFile);
     }
+    const removal = charClassRemoval(node);
+    if (removal) return removal;
     const fn = extractExpr(callee);
     const args = node.getArguments().map(a => extractExpr(a as Expression));
     if (node.hasQuestionDotToken()) {
