@@ -1258,7 +1258,10 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       // (rule-chain style `ruleA(e) ?? ruleB(e) ?? null`), the result stays
       // optional — otherwise the enclosing chain level loses its optionality
       // and narrowing can't rewrite it.
-      const ty: Ty = right.ty.kind === "optional" ? right.ty : inner;
+      // A null/undefined default keeps the result optional: `xs[0] ?? null`.
+      const absentDefault = e.right.kind === "var" && e.right.name === "undefined";
+      const ty: Ty = right.ty.kind === "optional" ? right.ty
+        : absentDefault ? { kind: "optional", inner } : inner;
       return { kind: "nullish", left, right, ty };
     }
 
