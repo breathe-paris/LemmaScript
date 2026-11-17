@@ -98,7 +98,9 @@ export type TExpr =
   | { kind: "field"; obj: TExpr; field: string; ty: Ty;
       isDiscriminant?: boolean;             // true if this is a discriminant field access
       ofVariant?: string }                  // which union variant the field is read from, when narrowing determined it
-  | { kind: "record"; spread: TExpr | null; fields: { name: string; value: TExpr }[]; ty: Ty }
+  | { kind: "record"; spread: TExpr | null;
+      /** slotTy: the declared field type, when it is optional (see pathReplacer). */
+      fields: { name: string; value: TExpr; slotTy?: Ty }[]; ty: Ty }
   | { kind: "arrayLiteral"; elems: TExpr[]; ty: Ty }
   | { kind: "lambda"; params: { name: string; ty: Ty; rest?: true; defaultValue?: TExpr }[]; body: TStmt[]; ty: Ty }
   | { kind: "conditional"; cond: TExpr; then: TExpr; else: TExpr; ty: Ty }

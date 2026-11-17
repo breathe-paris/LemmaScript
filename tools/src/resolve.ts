@@ -1377,6 +1377,7 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
           // U → NonArrayBranch(U). Handles both optional fields and fields
           // typed as a synth array-union (`T[] | U`).
           value = coerceToTargetTy(value, declTy, ctx.typeDecls);
+          if (declTy.kind === "optional") return { name: f.name, value, slotTy: declTy };
         }
         return { name: f.name, value };
       });

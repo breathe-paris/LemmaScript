@@ -2209,19 +2209,38 @@ function matchesAccessPath(e: TExpr, path: AccessPath): boolean {
   return collected.every((f, i) => f === path.fields[i]);
 }
 
-/** Replace every TExpr matching `path` with `var(binder, binderTy)`. */
+/** Replace every TExpr matching `path` with `var(binder, binderTy)`. Where
+ *  the occurrence fills an optional slot (a record field or a parameter
+ *  declared `T | null`), it still stands for the whole optional, so the
+ *  narrowed payload is re-wrapped: `Some(binder)`. */
+function pathReplacer(path: AccessPath, binder: string, binderTy: Ty): (e: TExpr) => TExpr | null {
+  const bound = { kind: "var", name: binder, ty: binderTy } as TExpr;
+  const slot = (value: TExpr, slotTy: Ty | undefined): TExpr | null =>
+    slotTy?.kind === "optional" && binderTy.kind !== "optional" && matchesAccessPath(value, path)
+      ? { kind: "call", fn: { kind: "var", name: "Some", ty: slotTy }, args: [bound], ty: slotTy, callKind: "pure" }
+      : null;
+  const replace = (e: TExpr): TExpr | null => {
+    if (matchesAccessPath(e, path)) return bound;
+    if (e.kind === "record" && e.fields.some(f => slot(f.value, f.slotTy))) {
+      return { ...e, spread: e.spread && mapTExpr(e.spread, replace),
+        fields: e.fields.map(f => ({ ...f, value: slot(f.value, f.slotTy) ?? mapTExpr(f.value, replace) })) };
+    }
+    if (e.kind === "call" && e.paramTys && e.args.some((a, i) => slot(a, e.paramTys![i]))) {
+      return { ...e, fn: mapTExpr(e.fn, replace),
+        args: e.args.map((a, i) => slot(a, e.paramTys![i]) ?? mapTExpr(a, replace)) };
+    }
+    return null;
+  };
+  return replace;
+}
+
 function replacePathInTExpr(expr: TExpr, path: AccessPath, binder: string, binderTy: Ty): TExpr {
-  return mapTExpr(expr, e =>
-    matchesAccessPath(e, path)
-      ? { kind: "var", name: binder, ty: binderTy } as TExpr : null
-  );
+  return mapTExpr(expr, pathReplacer(path, binder, binderTy));
 }
 
 function replacePathInTStmts(stmts: TStmt[], path: AccessPath, binder: string, binderTy: Ty): TStmt[] {
-  return stmts.map(s => mapTStmt(s, e =>
-    matchesAccessPath(e, path)
-      ? { kind: "var", name: binder, ty: binderTy } as TExpr : null
-  ));
+  const replace = pathReplacer(path, binder, binderTy);
+  return stmts.map(s => mapTStmt(s, replace));
 }
 
 
