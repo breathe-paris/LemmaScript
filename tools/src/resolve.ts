@@ -1010,6 +1010,14 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       }
       let right = resolveExpr(rawRight, rightCtx);
       if (e.op === "===" || e.op === "!==") {
+        // A value the type (or an enclosing narrowing) says is present is
+        // never null/undefined: `x !== null && x !== undefined` → the second
+        // test is constant once the first has narrowed `x`.
+        const isAbsent = (x: TExpr) => x.kind === "var" && x.name === "undefined";
+        const present = (x: TExpr) => ["bool", "nat", "int", "real", "string", "array", "tuple", "map", "set"].includes(x.ty.kind);
+        if ((isAbsent(right) && present(left)) || (isAbsent(left) && present(right))) {
+          return { kind: "bool", value: e.op === "!==", ty: { kind: "bool" } };
+        }
         left = coerceStr(left, right.ty);
         right = coerceStr(right, left.ty);
         // Spec (`//@`) comparisons are proof-only, so they can't diverge at
