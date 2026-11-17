@@ -63,7 +63,8 @@ function recurseExpr(e: TExpr, ctx: CondCtx, inCond = false): TExpr {
     case "havoc":
       return e;
     case "binop":
-      if (inCond && e.op === "&&") return { ...e, left: rc(e.left), right: rc(e.right) };
+      // A conjunct of a `&&` chain is narrowed with the whole chain, never alone.
+      if (e.op === "&&") return { ...e, left: rc(e.left), right: rc(e.right) };
       if (e.op === "==>") return { ...e, left: rc(e.left), right: re(e.right) };
       return { ...e, left: re(e.left), right: re(e.right) };
     case "unop": return { ...e, expr: re(e.expr) };
