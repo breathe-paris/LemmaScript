@@ -51,11 +51,11 @@ import {
 /** `inCond`: `e` is (a conjunct of) a condition that an enclosing if, while,
  *  ternary or `==>` rule narrows as a whole — leave its `&&` chain intact. */
 function walkExpr(e: TExpr, ctx: CondCtx, inCond = false): TExpr {
-  const r = recurseExpr(e, ctx, inCond);
+  const r = recurseExpr(e, ctx);
   return (inCond ? null : ruleAndOptional(r, ctx)) ?? ruleNullish(r, ctx) ?? ruleNullishIndex(r) ?? ruleOptChainIndex(r) ?? ruleOptChain(r, ctx) ?? ruleImplOptional(r, ctx) ?? ruleImplArrayIsArray(r, ctx) ?? ruleConditionalArrayIsArray(r, ctx) ?? ruleConditionalAndArrayIsArray(r, ctx) ?? ruleConditionalAndOptional(r, ctx) ?? ruleConditionalOptionalSimple(r, ctx) ?? ruleConditionalInMap(r, ctx) ?? ruleConditionalOptionalTruthy(r, ctx) ?? r;
 }
 
-function recurseExpr(e: TExpr, ctx: CondCtx, inCond = false): TExpr {
+function recurseExpr(e: TExpr, ctx: CondCtx): TExpr {
   const re = (x: TExpr) => walkExpr(x, ctx);
   const rc = (x: TExpr) => walkExpr(x, ctx, true);
   switch (e.kind) {
