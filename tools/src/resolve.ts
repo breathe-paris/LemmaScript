@@ -1247,6 +1247,9 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       // left ?? right — result type is left's inner (when left is optional)
       // or just left's type, unified with right's type.
       const left = resolveExpr(e.left, ctx);
+      // `x ?? null` / `x ?? undefined`: null and undefined share one model
+      // (None), so the coalescing is the identity on an optional `x`.
+      if (left.ty.kind === "optional" && e.right.kind === "var" && e.right.name === "undefined") return left;
       const inner: Ty = left.ty.kind === "optional" ? left.ty.inner : left.ty;
       // The default shares the result type, so coerce a string literal to a
       // string-union enum (e.g. `availableLevels[0] ?? "off"`).
