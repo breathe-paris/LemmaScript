@@ -1379,7 +1379,9 @@ function typeToString(type: Type): string {
     }
     const typeArgs = type.getTypeArguments();
     if (typeArgs.length > 0) {
-      return `${name}<${typeArgs.map(t => typeToString(t)).join(", ")}>`;
+      // Readonly collections hold the same values; only writes are refused.
+      const collection = name === "ReadonlySet" ? "Set" : name === "ReadonlyMap" ? "Map" : name;
+      return `${collection}<${typeArgs.map(t => typeToString(t)).join(", ")}>`;
     }
     return name;
   }
@@ -2924,7 +2926,7 @@ export function extractModule(sourceFile: SourceFile, options: LscOptions = DEFA
 
   // Resolve imported types: extract types referenced in function signatures but not in this file
   const knownTypes = new Set([...typeDecls.map(d => d.name), ...classes.map(c => c.name)]);
-  const builtins = new Set(["Map", "Set", "Array", "String", "Number", "Boolean", "Promise", "Date", "RegExp", "Error"]);
+  const builtins = new Set(["Map", "Set", "ReadonlyMap", "ReadonlySet", "Array", "ReadonlyArray", "String", "Number", "Boolean", "Promise", "Date", "RegExp", "Error"]);
   const visitedTypes = new Set<unknown>();
   function resolveType(t: Type, locationNode: Node) {
     // Enums are primitive values, not records of Number prototype methods.
