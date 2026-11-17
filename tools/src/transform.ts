@@ -1935,6 +1935,18 @@ function buildMatchArms<T>(
 /** Build value-pattern arms for a switch on a plain string. Case labels have
  *  already been validated and decoded by extraction; unlike datatype cases,
  *  these are literal values and introduce no constructor-field binders. */
+/** A switch without default over a literal union whose every member has its
+ *  case: the TS type admits no other string, but the model's \`string\` does,
+ *  and Dafny wants the match exhaustive. The last case takes the remaining
+ *  strings — values no well-typed caller can pass — so a proof still covers
+ *  every real input. */
+function closeLiteralArms<T>(arms: { pattern: MatchPattern; body: T }[], ty: Ty | undefined,
+  labels: string[], hasDefault: boolean): void {
+  if (hasDefault || arms.length === 0 || ty?.kind !== "string" || !ty.values?.length) return;
+  if (!ty.values.every(v => labels.includes(v))) return;
+  arms[arms.length - 1] = { ...arms[arms.length - 1], pattern: pWild() };
+}
+
 function buildLiteralMatchArms<T>(
   cases: { name: string; body: TStmt[] }[],
   transformBody: (body: TStmt[]) => T | null,
@@ -2097,6 +2109,7 @@ function emitSwitchStmt(s: TStmt & { kind: "switch" }, typeDecls: TypeDeclInfo[]
           if (ctorName && vn && baseName) out = stampScrutineeUpdates(out, vn, ctorName, baseName);
           return out;
         })!;
+  if (literalCases) closeLiteralArms(arms, matchTy, s.cases.map(c => c.label), s.defaultBody.length > 0);
   if (s.defaultBody.length > 0) arms.push({ pattern: pWild(), body: transformStmts(s.defaultBody, typeDecls) });
   return { kind: "match", scrutinee: ef ? ef.scrutinee : varE(s.expr.kind === "var" ? s.expr.name : "?"), arms };
 }
@@ -2312,6 +2325,7 @@ function transformPureSwitch(s: TStmt & { kind: "switch" }, typeDecls: TypeDeclI
       ? buildLiteralMatchArms(cases, (body) => transformPureBody(body, typeDecls))
       : buildMatchArms(cases, undefined, ctorDecl!.name, typeDecls, (body) => transformPureBody(body, typeDecls));
     if (!arms) return null;
+    if (literalCases) closeLiteralArms(arms, ef.fieldTy, s.cases.map(c => c.label), s.defaultBody.length > 0);
     if (s.defaultBody.length > 0) {
       const body = transformPureBody(s.defaultBody, typeDecls);
       if (!body) return null;

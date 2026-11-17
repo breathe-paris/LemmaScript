@@ -1211,7 +1211,7 @@ function extractRecord(name: string, type: Type, locationNode: Node, overrides?:
     if (override) { fields.push({ name: prop.getName(), tsType: override, ...optionalKey }); continue; }
 
     const propType = prop.getTypeAtLocation(locationNode);
-    let tsType = typeToString(propType);
+    let tsType = inlineStringUnionText(propType) ?? typeToString(propType);
     tsType = declaredTypeTextIfBetter(propDecl, tsType);
     // Optional property: `foo?: T` reports as `T` (ts-morph strips the
     // `| undefined` from a question-token type). Add it back so the field
@@ -1274,6 +1274,18 @@ function findDiscriminant(members: Type[]): string | null {
  *  syntactic node text preserves the alias spelling (`TExpr | null`). Only
  *  plain reference text is used: inline object literals (containing `{`)
  *  keep the `__type` marker so record synthesis can handle them. */
+/** An inline string-literal union field (`kind: "a" | "b"`) spelled with its
+ *  members, so the field keeps them (`string` with `values`) instead of
+ *  widening to `string`. A named alias keeps its own lowering. */
+function inlineStringUnionText(type: Type): string | undefined {
+  if (type.getAliasSymbol() || !type.isUnion()) return undefined;
+  const members = type.getUnionTypes();
+  const literals = members.filter(m => m.isStringLiteral());
+  const absent = members.some(m => m.isNull() || m.isUndefined());
+  if (literals.length < 2 || literals.length + members.filter(m => m.isNull() || m.isUndefined()).length !== members.length) return undefined;
+  return [...literals.map(m => JSON.stringify(m.getLiteralValue())), ...(absent ? ["undefined"] : [])].join(" | ");
+}
+
 function declaredTypeTextIfBetter(propDecl: Node | undefined, tsType: string): string {
   if (!tsType.includes("__type") || !propDecl) return tsType;
   const tn = (propDecl as { getTypeNode?: () => Node | undefined }).getTypeNode?.();
