@@ -34,7 +34,7 @@
  * binder counter) threads through the walk; no module-level state.
  */
 
-import type { TModule, TFunction, TStmt, TExpr } from "./typedir.js";
+import type { TModule, TFunction, TStmt, TExpr, Ty } from "./typedir.js";
 import { isTerminatorKind } from "./typedir.js";
 import { builtinSpec } from "./builtins.js";
 import {
@@ -48,18 +48,24 @@ import {
 
 // ── Walkers ──────────────────────────────────────────────────
 
-function walkExpr(e: TExpr, ctx: CondCtx): TExpr {
-  const r = recurseExpr(e, ctx);
-  return ruleNullish(r, ctx) ?? ruleNullishIndex(r) ?? ruleOptChainIndex(r) ?? ruleOptChain(r, ctx) ?? ruleImplOptional(r, ctx) ?? ruleImplArrayIsArray(r, ctx) ?? ruleConditionalArrayIsArray(r, ctx) ?? ruleConditionalAndArrayIsArray(r, ctx) ?? ruleConditionalAndOptional(r, ctx) ?? ruleConditionalOptionalSimple(r, ctx) ?? ruleConditionalInMap(r, ctx) ?? ruleConditionalOptionalTruthy(r, ctx) ?? r;
+/** `inCond`: `e` is (a conjunct of) a condition that an enclosing if, while,
+ *  ternary or `==>` rule narrows as a whole — leave its `&&` chain intact. */
+function walkExpr(e: TExpr, ctx: CondCtx, inCond = false): TExpr {
+  const r = recurseExpr(e, ctx, inCond);
+  return (inCond ? null : ruleAndOptional(r, ctx)) ?? ruleNullish(r, ctx) ?? ruleNullishIndex(r) ?? ruleOptChainIndex(r) ?? ruleOptChain(r, ctx) ?? ruleImplOptional(r, ctx) ?? ruleImplArrayIsArray(r, ctx) ?? ruleConditionalArrayIsArray(r, ctx) ?? ruleConditionalAndArrayIsArray(r, ctx) ?? ruleConditionalAndOptional(r, ctx) ?? ruleConditionalOptionalSimple(r, ctx) ?? ruleConditionalInMap(r, ctx) ?? ruleConditionalOptionalTruthy(r, ctx) ?? r;
 }
 
-function recurseExpr(e: TExpr, ctx: CondCtx): TExpr {
+function recurseExpr(e: TExpr, ctx: CondCtx, inCond = false): TExpr {
   const re = (x: TExpr) => walkExpr(x, ctx);
+  const rc = (x: TExpr) => walkExpr(x, ctx, true);
   switch (e.kind) {
     case "var": case "num": case "bigint": case "str": case "bool":
     case "havoc":
       return e;
-    case "binop": return { ...e, left: re(e.left), right: re(e.right) };
+    case "binop":
+      if (inCond && e.op === "&&") return { ...e, left: rc(e.left), right: rc(e.right) };
+      if (e.op === "==>") return { ...e, left: rc(e.left), right: re(e.right) };
+      return { ...e, left: re(e.left), right: re(e.right) };
     case "unop": return { ...e, expr: re(e.expr) };
     case "call": return { ...e, fn: re(e.fn), args: e.args.map(re) };
     case "index": return { ...e, obj: re(e.obj), idx: re(e.idx) };
@@ -68,7 +74,7 @@ function recurseExpr(e: TExpr, ctx: CondCtx): TExpr {
       fields: e.fields.map(f => ({ ...f, value: re(f.value) })) };
     case "arrayLiteral": return { ...e, elems: e.elems.map(re) };
     case "lambda": return { ...e, body: walkStmts(e.body, ctx) };
-    case "conditional": return { ...e, cond: re(e.cond), then: re(e.then), else: re(e.else) };
+    case "conditional": return { ...e, cond: rc(e.cond), then: re(e.then), else: re(e.else) };
     case "optChain": return { ...e, obj: re(e.obj),
       chain: e.chain.map(s => s.kind === "call" ? { ...s, args: s.args.map(re) }
         : s.kind === "index" ? { ...s, idx: re(s.idx) }
@@ -128,15 +134,16 @@ function walkStmts(stmts: TStmt[], ctx: CondCtx): TStmt[] {
 
 function recurseStmt(s: TStmt, ctx: CondCtx): TStmt {
   const re = (x: TExpr) => walkExpr(x, ctx);
+  const rc = (x: TExpr) => walkExpr(x, ctx, true);
   const rs = (x: TStmt[]) => walkStmts(x, ctx);
   switch (s.kind) {
     case "let": return { ...s, init: re(s.init) };
     case "assign": return { ...s, value: re(s.value) };
     case "return": return { ...s, value: re(s.value) };
     case "break": case "continue": case "throw": return s;
-    case "expr": return { ...s, expr: re(s.expr) };
-    case "if": return { ...s, cond: re(s.cond), then: rs(s.then), else: rs(s.else) };
-    case "while": return { ...s, cond: re(s.cond),
+    case "expr": return { ...s, expr: rc(s.expr) };  // ruleExprStmtAndOptional owns a bare `&&` guard
+    case "if": return { ...s, cond: rc(s.cond), then: rs(s.then), else: rs(s.else) };
+    case "while": return { ...s, cond: rc(s.cond),
       invariants: s.invariants.map(re),
       decreases: s.decreases ? re(s.decreases) : null,
       doneWith: s.doneWith ? re(s.doneWith) : null,
@@ -549,6 +556,21 @@ function ruleConditionalAndOptional(e: TExpr, ctx: CondCtx): TExpr | null {
     cond: restCond, then: e.then, else: e.else, ty: e.ty,
   };
   return presentMatchExpr(check, walkExpr(innerCond, ctx), e.else, e.ty, ctx);
+}
+
+/** Driver (expression): `x !== undefined && rest` as a boolean value
+ *  (returned, bound, passed, or in a spec) — the narrowing `&&` itself.
+ *  → `someMatch x { Some(_x_val) => rest, None => false }`, so `rest` reads
+ *  the payload. Conditions owned by an enclosing rule are skipped (`inCond`);
+ *  a method call in `rest` is left alone for the same reason as the ternary. */
+function ruleAndOptional(e: TExpr, ctx: CondCtx): TExpr | null {
+  if (e.kind !== "binop" || e.op !== "&&" || e.ty.kind !== "bool") return null;
+  const extracted = leadingPresent(e);
+  if (!extracted) return null;
+  const { check, restCond } = extracted;
+  if (containsMethodCall(restCond)) return null;
+  const bool: Ty = { kind: "bool" };
+  return presentMatchExpr(check, walkExpr(restCond, ctx), { kind: "bool", value: false, ty: bool }, bool, ctx);
 }
 
 // ── Variant drivers (discriminants and synth array-unions) ──
